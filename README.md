@@ -20,7 +20,7 @@ def now():
     return p2u(datetime.datetime.utcnow())
 ```
 
-# Using the basic version:
+# Basic version:
 
 ```
 x, y = getRandom(1e7, 100)
@@ -33,7 +33,7 @@ beta = elasticNet(x = x, y = y, l1 = l1, l2 = l2, cholesky = False)
 print('ElasticNet.elasticNet latency:    {:.0f}ms'.format(now() - t0))
 ```
 
-#### Compare with sklearn:
+#### Comparison with sklearn:
 
 ```
 from sklearn.linear_model import ElasticNet as sklearnElasticNet
