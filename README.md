@@ -45,7 +45,7 @@ print('sklearnElasticNet latency:    {:.0f}ms'.format(now() - t0))
 print(np.concatenate([[beta], [beta2]], axis = 0).T) # compare the betas
 ```
 
-## Cross-validated version:
+# Cross-validated version:
 
 ```
 x, y = getRandom(1e5, 100)
