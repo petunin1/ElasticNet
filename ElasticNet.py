@@ -1,37 +1,12 @@
 import numpy as np
-import datetime
-
-
-def rand(*args):
-    return np.random.rand(*[int(a) for a in args])
-
-
-def p2u(p):
-    epoch = datetime.datetime.utcfromtimestamp(0)
-    return (p - epoch).total_seconds() * 1000.0
-
-
-def now():
-    return p2u(datetime.datetime.utcnow())
-
-
-def cat(*args, **kwargs):
-    return np.concatenate([a for a in args], **kwargs)
-
-
-def dimPush(a):
-    return a.reshape(cat(a.shape, [1]))
-
-
-def dimPop(a):
-    return a.reshape(a.shape[:-1])
+import scipy
 
 
 def planeRot(x):
     '''
-    G x = y
-    G - orthogonal 2x2 matrix, x & y : 2 vectors, y[2] = 0
-    return G, y
+    Orthogonal matrix G for a 2-element vector x such that G x = y where the second element of y is zero.
+    :param x: 2-element vector
+    :return: matrix G
     '''
     l = np.sqrt(x[0] ** 2 + x[1] ** 2)
     if not l:
@@ -42,30 +17,25 @@ def planeRot(x):
 
 
 class Cholesky:
+    '''
+    Cholesky (upper diagonal-triangular) decomposition C of an initial matrix X, supporting addition and removal of vectors, such that C.T C = X.T X.
+    '''
+
     def __init__(self, dtype, reserve = 0):
+        '''
+        :param dtype: dtype of the decomposition matrix
+        :param reserve: pre-allocated dimension of the decomposition matrix
+        '''
         self.R = np.empty([reserve, reserve], dtype = dtype) # upper triangular
         self.points = 0
 
-    def insert(self, X, x, l2 = 0.0):
-        xTx = np.sum(x ** 2) + l2
-        if not self.points:
-            if not self.R.shape[0]:
-                self.R = np.array([[np.sqrt(xTx)]], dtype = x.dtype)
-            else:
-                self.R[0, 0] = np.sqrt(xTx)
-            self.points = 1
-            return
-        from scipy import linalg
-        if self.R.shape[0] == self.points:
-            R_new = np.empty([self.R.shape[0] + 1, self.R.shape[0] + 1], dtype = self.R.dtype)
-            R_new[:self.points, :self.points] = self.R[:self.points, :self.points]
-            self.R = R_new
-        self.R[:self.points, self.points] = dimPop(linalg.solve_triangular(self.get().T, np.dot(X.T, dimPush(x)), lower = True, overwrite_b = True))
-        self.R[self.points, :self.points] = 0.0
-        self.R[self.points, self.points] = np.sqrt(max(0.0, xTx - np.sum(self.R[:self.points, self.points] ** 2)))
-        self.points += 1
-
     def insertProducts(self, XTx, xTx):
+        '''
+        Addition of a vector x to the existing set X.
+        :param XTx: X.T.x
+        :param xTx: x.T.x
+        :return:
+        '''
         if not self.points:
             if not self.R.shape[0]:
                 self.R = np.array([[np.sqrt(xTx)]], dtype = x.dtype)
@@ -73,17 +43,20 @@ class Cholesky:
                 self.R[0, 0] = np.sqrt(xTx)
             self.points = 1
             return
-        from scipy import linalg
         if self.R.shape[0] == self.points:
             R_new = np.empty([self.R.shape[0] + 1, self.R.shape[0] + 1], dtype = self.R.dtype)
             R_new[:self.points, :self.points] = self.R[:self.points, :self.points]
             self.R = R_new
-        self.R[:self.points, self.points] = linalg.solve_triangular(self.get().T, XTx, lower = True, overwrite_b = True)
+        self.R[:self.points, self.points] = scipy.linalg.solve_triangular(self.get().T, XTx, lower = True, overwrite_b = True)
         self.R[self.points, :self.points] = 0.0
         self.R[self.points, self.points] = np.sqrt(max(0.0, xTx - np.sum(self.R[:self.points, self.points] ** 2)))
         self.points += 1
 
     def remove(self, j):
+        '''
+        Removal of a vector from the existing set.
+        :param j: index of the vector to be removed in the remaining set
+        '''
         self.R[:self.points, j:self.points - 1] = self.R[:self.points, j + 1:self.points]
         self.points -= 1
         for k in range(j, self.points):
@@ -96,19 +69,36 @@ class Cholesky:
         return self.R[:self.points, :self.points]
 
     '''
-    x = rand(10e4, 3)
+    x = np.random.rand(10e4, 3)
     ch = Cholesky(np.float32)
-    ch.insert(None, x[:, 0])
-    ch.insert(x[:, [0]], x[:, 1])
+    ch.insertProducts(None, np.sum(x[:, 0] ** 2))
+    ch.insertProducts(np.dot(x[:, [0]].T, x[:, 2]), np.sum(x[:, 1] ** 2))
     ch.insertProducts(np.dot(x[:, [0, 1]].T, x[:, 2]), np.sum(x[:, 2] ** 2))
     ch.remove(1)
     ch.insert(x[:, [0, 2]], x[:, 1])
-    print(np.dot(ch.get().T, ch.get()))
-    print(np.dot(x.T, x))
+    print(np.dot(x.T, x)) # original x.T x matrix 
+    print(np.dot(ch.get().T, ch.get())) # the same for Cholesky decomposition instead of x
     '''
 
 
-def getBeta(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
+def elasticNet(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
+    '''
+    Least angle implementation of the ElasticNet.
+    Finding an optimal beta for a single or multiple values of l1 and a single value of l2.
+    One should either specify {x, y} or {xtx, xty, n}.
+    Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed.
+    :param x: matrix of independent vectors
+    :param y: dependent vector or matrix with last dimension of size 1
+    :param n: number of data points
+    :param xtx: x.T.x matrix product
+    :param xty: x.T.y matrix-vector product
+    :param l1: L1 regularisation parameter or a list of parameters
+    :param l2: L2 regularisation parameter
+    :param itMax: maximum number of iterations, including when a variable is removed
+    :param varMax: maximum number of dependent variables to be included
+    :param cholesky: whether to use Cholesky decomposition for xtx
+    :return:
+    '''
     # l1 can be a list of non-negative values (sorted from highest); xtx and xty will be overwritten
     '''
     l1 -> l1 * n
@@ -142,7 +132,7 @@ def getBeta(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l2 =
         returnMatrix = False
     if len(l1List) == 1 and not l1List[0]:
         try:
-            beta = np.linalg.solve(xtx, xty)
+            beta = scipy.linalg.solve(xtx, xty)
             return beta[:, np.newaxis] if returnMatrix else beta
         except:
             return np.full([p, 1] if returnMatrix else p, 0.0, dtype = xtx.dtype)
@@ -167,8 +157,6 @@ def getBeta(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l2 =
     it = 0
     var = 0
 
-    from scipy import linalg
-
     if p < varMax:
         varMax = p
     if not l2 and n < varMax:
@@ -191,8 +179,8 @@ def getBeta(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l2 =
         \hat X^{T} \vec d = \vec s    [\vec s - sign of the vector product of \hat X and the unfitted remainder \vec r]
         \hat X^{T} \hat X \vec g = \vec s
         '''
-        g = linalg.solve_triangular(ch.get(), linalg.solve_triangular(ch.get().T, s, lower = True), lower = False, overwrite_b = True) if cholesky else \
-            np.linalg.solve(xtx[A, :][:, A], s)
+        g = scipy.linalg.solve_triangular(ch.get(), scipy.linalg.solve_triangular(ch.get().T, s, lower = True), lower = False, overwrite_b = True) if cholesky else \
+            scipy.linalg.solve(xtx[A, :][:, A], s)
         a = np.dot(xtx[I, :][:, A], g) # X(inactive) & d vector product with=without regularisation (the same as "np.dot(x[:, I].T, d)")
 
         '''
@@ -256,7 +244,16 @@ def getBeta(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l2 =
     return betaList if returnMatrix else betaList[:, 0]
 
 
-def getBetaCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
+def elasticNetCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
+    '''
+    :param x: matrix of independent vectors
+    :param y: dependent vector or matrix with last dimension of size 1
+    :param l1: L1 regularisation parameter
+    :param l2: L2 regularisation parameter
+    :param tol: tolerance of beta components relative to the largest one, used as a stopping parameter
+    :param itMax: maximum number of iterations of running through all beta components
+    '''
+
     '''
     l1 -> l1 * n
     l2 -> l2 * n
@@ -266,16 +263,16 @@ def getBetaCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
     '''
 
     if x.ndim == 1:
-        x = dimPush(x)
+        x = x[:, np.newaxis]
     if y.ndim == 2:
-        y = dimPop(y)
+        y = y[:, 0]
 
     #@nb.njit(nogil = True, fastmath = True)
-    def getBetaCoordinateDescent1(x, y, l1, l2, tol, itMax):
+    def elasticNetCoordinateDescent1(x, y, l1, l2, tol, itMax):
         n, p = x.shape
 
-        xy = np.dot(x.T, y)
-        xx = np.dot(x.T, x)
+        xty = np.dot(x.T, y)
+        xtx = np.dot(x.T, x)
 
         l1 *= n / 2
         l2 *= n
@@ -292,7 +289,7 @@ def getBetaCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
                     r += x[:, i] * beta[i]
                 b1Old = beta[i]
                 beta[i] = 0.0
-                prod = xy[i] - np.dot(xx[i], beta) #np.dot(r, x1) #tf.tensordot(r, x1, [0, 0]).numpy()
+                prod = xty[i] - np.dot(xtx[i], beta) #np.dot(r, x1) #tf.tensordot(r, x1, [0, 0]).numpy()
                 b1 = np.fabs(prod) - l1[0]
                 if b1 <= 0.0:
                     continue
@@ -306,50 +303,62 @@ def getBetaCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
 
         return beta
 
-    beta = getBetaCoordinateDescent1(x, y.astype(x.dtype), np.array([l1]).astype(x.dtype), np.array([l2]).astype(x.dtype), np.array([tol]).astype(x.dtype), itMax)
+    beta = elasticNetCoordinateDescent1(x, y.astype(x.dtype), np.array([l1]).astype(x.dtype), np.array([l2]).astype(x.dtype), np.array([tol]).astype(x.dtype), itMax)
 
     return beta
 
 
-def getBetaCV(x = None, y = None, n = None, xtx = None, xty = None, xtxTotal = None, xtyTotal = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), batches = 3, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
-    if x.ndim == 1:
-        x = x[:, np.newaxis]
-    if y.ndim == 2:
-        y = y[:, 0]
-    if x is not None:
+def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n = None, xtxTotal = None, xtyTotal = None, nTotal = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
+    '''
+    Cross-validated version of the elasticNet function.
+    Finding an optimal beta, l1, l2, using the elasticNet function.
+    One should either specify {x, y, batches} or {xtx, xty, n}.
+    Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed.
+    :param x: matrix of independent vectors
+    :param y: dependent vector or matrix with last dimension of size 1
+    :param batches: number of batches for cross-validation (should be >=2)
+    :param xtx: 3-dimensional tensor of x.T.x matrix products where the last dimension corresponds to batches
+    :param xty: 2-dimensional tensor of x.T.y matrix-vector products where the last dimension corresponds to batches
+    :param n: vector of the number of data points in each batch
+    :param xtxTotal: sum of xtx across the batches
+    :param xtyTotal: sum of xty across the batches
+    :param nTotal: total number of data points
+    :param l1: L1 regularisation parameter or a list of parameters
+    :param l2: L2 regularisation parameter or a list of parameters
+    :param itMax: maximum number of iterations of adding and removing variables along the L1 path
+    :param varMax: maximum number of variables in the resulting set
+    :param cholesky: whether to use Cholesky decomposition for finding betas
+    :param returnBeta: whether to return optimal beta
+    :return: optimal beta for the combined set of data; optimal L1; optimal L2
+    '''
+    if x is not None and y is not None and batches is not None:
+        if x.ndim == 1:
+            x = x[:, np.newaxis]
+        if y.ndim == 2:
+            y = y[:, 0]
         nTotal, p = x.shape
-
-    batchLen = np.int64(np.floor(nTotal / batches))
-    if xtx is None:
-        nList = np.full(batches, batchLen, dtype = np.int64)
+        batchLen = np.int64(np.floor(nTotal / batches))
         xtx = np.empty([p, p, batches], dtype = x.dtype)
+        xty = np.empty([p, batches], dtype = xtx.dtype)
+        n = np.full(batches, batchLen, dtype = np.int64)
         begin = 0
         end = batchLen
         for b in range(batches):
             if b == batches - 1:
                 end = nTotal
-                nList[b] = end - begin
+                n[b] = end - begin
             xb = x[begin:end]
             xtx[:, :, b] = np.dot(xb.T, xb)
-            begin += batchLen
-            end += batchLen
-    if xty is None:
-        xty = np.empty([p, batches], dtype = xtx.dtype)
-        begin = 0
-        end = batchLen
-        for b in range(batches):
-            if b == batches - 1:
-                end = nTotal
-            xb = x[begin:end]
             yb = y[begin:end]
             xty[:, b] = np.dot(xb.T, yb)
             begin += batchLen
             end += batchLen
-
     if xtxTotal is None:
         xtxTotal = np.sum(xtx, axis = 2)
     if xtyTotal is None:
         xtyTotal = np.sum(xty, axis = 1)
+    if nTotal is None:
+        nTotal = np.sum(n)
 
     l1List = np.sort(np.array(l1, dtype = xtx.dtype) if type(l1) == list else l1 if type(l1) == np.ndarray else np.array([l1], dtype = xtx.dtype), kind = 'mergesort')[::-1]
     l2List = np.array(l2, dtype = xtx.dtype) if type(l2) == list else l2 if type(l2) == np.ndarray else np.array([l2], dtype = xtx.dtype)
@@ -357,16 +366,16 @@ def getBetaCV(x = None, y = None, n = None, xtx = None, xty = None, xtxTotal = N
     l2Len = len(l2List)
     cost = np.full([l1Len, l2Len], 0.0, dtype = xtx.dtype)
 
-    for b in range(batches):
+    for b in range(len(n)):
         xtxBatch = xtxTotal - xtx[:, :, b]
         xtyBatch = xtyTotal - xty[:, b]
-        nBatch = nTotal - nList[b]
+        nBatch = nTotal - n[b]
         for l2Ind in range(l2Len):
-            beta = getBeta(x = None, y = None, n = nBatch, xtx = xtxBatch.copy(), xty = xtyBatch.copy(), l1 = l1List, l2 = l2List[l2Ind], cholesky = cholesky)
+            beta = elasticNet(x = None, y = None, n = nBatch, xtx = xtxBatch.copy(), xty = xtyBatch.copy(), l1 = l1List, l2 = l2List[l2Ind], cholesky = cholesky)
             cost[:, l2Ind] += np.sum(np.tensordot(xtx[:, :, b], beta, axes = [1, 0]) * beta, axis = 0) - 2 * np.tensordot(xty[:, b], beta, axes = [0, 0])
 
     l1Ind, l2Ind = np.unravel_index(np.argmin(cost), cost.shape)
     l1 = l1List[l1Ind]
     l2 = l2List[l2Ind]
     #print(cost)
-    return getBeta(x = None, y = None, n = nTotal, xtx = xtxTotal, xty = xtyTotal, l1 = l1, l2 = l2), l1, l2
+    return elasticNet(x = None, y = None, n = nTotal, xtx = xtxTotal, xty = xtyTotal, l1 = l1, l2 = l2) if returnBeta else None, l1, l2
