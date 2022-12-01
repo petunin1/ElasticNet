@@ -81,17 +81,18 @@ class Cholesky:
     '''
 
 
-def elasticNet(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
+def elasticNet(x = None, y = None, xtx = None, xty = None, n = None, overwriteMatrices = False, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
     '''
     Least angle implementation of the ElasticNet.
     Finding an optimal beta for a single or multiple values of l1 and a single value of l2.
-    One should either specify {x, y} or {xtx, xty, n}.
+    One should specify either {x, y} or {xtx, xty, n}.
     Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
-    :param n: number of data points
     :param xtx: x.T.x matrix product
     :param xty: x.T.y matrix-vector product
+    :param n: number of data points
+    :param overwriteMatrices: whether xtx and xty can be overwritten
     :param l1: L1 regularisation parameter or a list of parameters
     :param l2: L2 regularisation parameter
     :param itMax: maximum number of iterations, including when a variable is removed
@@ -99,7 +100,7 @@ def elasticNet(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l
     :param cholesky: whether to use Cholesky decomposition for xtx
     :return:
     '''
-    # l1 can be a list of non-negative values (sorted from highest); xtx and xty will be overwritten
+
     '''
     l1 -> l1 * n
     l2 -> l2 * n
@@ -108,21 +109,22 @@ def elasticNet(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l
     L -> ||y - x * b||_2 ^ 2 + l1 * ||b||_1
     '''
 
-    if x is not None:
-        n = len(x)
+    if xtx is None:
         if x.ndim == 1:
             x = x[:, np.newaxis]
-    if y is not None and y.ndim == 2:
-        y = y[:, 0]
-
-    if xtx is None:
+        if y.ndim == 2:
+            y = y[:, 0]
+        xty = np.dot(x.T, y)
         xtx = np.dot(x.T, x)
+        n = len(x)
+    elif not overwriteMatrices:
+        xtx = xtx.copy()
+        xty = xty.copy()
+
     p = len(xtx)
     l2 *= n
     xtx.flat[::p + 1] += l2
     returnMatrix = True
-    if xty is None:
-        xty = np.dot(x.T, y)
     if type(l1) == np.ndarray:
         l1List = l1.astype(xtx.dtype)
     elif type(l1) == list:
@@ -244,10 +246,16 @@ def elasticNet(x = None, y = None, n = None, xtx = None, xty = None, l1 = 0.0, l
     return betaList if returnMatrix else betaList[:, 0]
 
 
-def elasticNetCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
+def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, n = None, overwriteMatrices = False, l1 = None, l2 = None, tol = 1e-4, itMax = 1000):
     '''
+    Coordinate descent implementation of the ElasticNet.
+    One should specify either {x, y} or {xtx, xty, n}.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
+    :param xtx: x.T.x matrix product
+    :param xty: x.T.y matrix-vector product
+    :param n: number of data points
+    :param overwriteMatrices: whether xtx and xty can be overwritten
     :param l1: L1 regularisation parameter
     :param l2: L2 regularisation parameter
     :param tol: tolerance of beta components relative to the largest one, used as a stopping parameter
@@ -262,17 +270,21 @@ def elasticNetCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
     b1 = max(0, r * x - l1 / 2) * sign(r * x) / (x ^ 2 + l2)
     '''
 
-    if x.ndim == 1:
-        x = x[:, np.newaxis]
-    if y.ndim == 2:
-        y = y[:, 0]
-
-    #@nb.njit(nogil = True, fastmath = True)
-    def elasticNetCoordinateDescent1(x, y, l1, l2, tol, itMax):
-        n, p = x.shape
-
+    if xtx is None:
+        if x.ndim == 1:
+            x = x[:, np.newaxis]
+        if y.ndim == 2:
+            y = y[:, 0]
         xty = np.dot(x.T, y)
         xtx = np.dot(x.T, x)
+        n = len(x)
+    elif not overwriteMatrices:
+        xtx = xtx.copy()
+        xty = xty.copy()
+
+    #@nb.njit(nogil = True, fastmath = True)
+    def elasticNetCoordinateDescent1(xtx, xty, n, l1, l2, tol, itMax):
+        p = len(xtx)
 
         l1 *= n / 2
         l2 *= n
@@ -303,25 +315,21 @@ def elasticNetCoordinateDescent(x, y, l1, l2, tol = 1e-4, itMax = 1000):
 
         return beta
 
-    beta = elasticNetCoordinateDescent1(x, y.astype(x.dtype), np.array([l1]).astype(x.dtype), np.array([l2]).astype(x.dtype), np.array([tol]).astype(x.dtype), itMax)
-
-    return beta
+    return elasticNetCoordinateDescent1(xtx = xtx, xty = xty, n = n, l1 = np.array([l1]).astype(x.dtype), l2 = np.array([l2]).astype(x.dtype), tol = np.array([tol]).astype(x.dtype), itMax = itMax)
 
 
-def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n = None, xtxTotal = None, xtyTotal = None, nTotal = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
+def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
     '''
     Cross-validated version of the elasticNet function.
     Finding an optimal beta, l1, l2, using the elasticNet function.
     One should either specify {x, y, batches} or {xtx, xty, n}.
-    Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed.
+    Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed; the matrices will be overwritten.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
     :param batches: number of batches for cross-validation (should be >=2)
     :param xtx: 3-dimensional tensor of x.T.x matrix products where the last dimension corresponds to batches
     :param xty: 2-dimensional tensor of x.T.y matrix-vector products where the last dimension corresponds to batches
     :param n: vector of the number of data points in each batch
-    :param xtxTotal: sum of xtx across the batches
-    :param xtyTotal: sum of xty across the batches
     :param nTotal: total number of data points
     :param l1: L1 regularisation parameter or a list of parameters
     :param l2: L2 regularisation parameter or a list of parameters
@@ -331,7 +339,8 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
     :param returnBeta: whether to return optimal beta
     :return: optimal beta for the combined set of data; optimal L1; optimal L2
     '''
-    if x is not None and y is not None and batches is not None:
+
+    if xtx is None:
         if x.ndim == 1:
             x = x[:, np.newaxis]
         if y.ndim == 2:
@@ -353,12 +362,10 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
             xty[:, b] = np.dot(xb.T, yb)
             begin += batchLen
             end += batchLen
-    if xtxTotal is None:
-        xtxTotal = np.sum(xtx, axis = 2)
-    if xtyTotal is None:
-        xtyTotal = np.sum(xty, axis = 1)
-    if nTotal is None:
+    else:
         nTotal = np.sum(n)
+    xtxTotal = np.sum(xtx, axis = 2)
+    xtyTotal = np.sum(xty, axis = 1)
 
     l1List = np.sort(np.array(l1, dtype = xtx.dtype) if type(l1) == list else l1 if type(l1) == np.ndarray else np.array([l1], dtype = xtx.dtype), kind = 'mergesort')[::-1]
     l2List = np.array(l2, dtype = xtx.dtype) if type(l2) == list else l2 if type(l2) == np.ndarray else np.array([l2], dtype = xtx.dtype)
@@ -367,15 +374,11 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
     cost = np.full([l1Len, l2Len], 0.0, dtype = xtx.dtype)
 
     for b in range(len(n)):
-        xtxBatch = xtxTotal - xtx[:, :, b]
-        xtyBatch = xtyTotal - xty[:, b]
-        nBatch = nTotal - n[b]
         for l2Ind in range(l2Len):
-            beta = elasticNet(x = None, y = None, n = nBatch, xtx = xtxBatch.copy(), xty = xtyBatch.copy(), l1 = l1List, l2 = l2List[l2Ind], cholesky = cholesky)
+            beta = elasticNet(x = None, y = None, xtx = xtxTotal - xtx[:, :, b], xty = xtyTotal - xty[:, b], n = nTotal - n[b], l1 = l1List, l2 = l2List[l2Ind], cholesky = cholesky)
             cost[:, l2Ind] += np.sum(np.tensordot(xtx[:, :, b], beta, axes = [1, 0]) * beta, axis = 0) - 2 * np.tensordot(xty[:, b], beta, axes = [0, 0])
 
     l1Ind, l2Ind = np.unravel_index(np.argmin(cost), cost.shape)
     l1 = l1List[l1Ind]
     l2 = l2List[l2Ind]
-    #print(cost)
-    return elasticNet(x = None, y = None, n = nTotal, xtx = xtxTotal, xty = xtyTotal, l1 = l1, l2 = l2) if returnBeta else None, l1, l2
+    return elasticNet(x = None, y = None, xtx = xtxTotal, xty = xtyTotal, n = nTotal, overwriteMatrices = True, l1 = l1, l2 = l2) if returnBeta else None, l1, l2
