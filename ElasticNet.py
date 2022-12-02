@@ -34,7 +34,6 @@ class Cholesky:
         Addition of a vector x to the existing set X.
         :param XTx: X.T.x
         :param xTx: x.T.x
-        :return:
         '''
         if not self.points:
             if not self.R.shape[0]:
@@ -66,6 +65,9 @@ class Cholesky:
                 self.R[k:k + 2, k + 1:self.points] = np.dot(G, self.R[k:k + 2, k + 1:self.points])
 
     def get(self):
+        '''
+        :return: Cholesky matrix
+        '''
         return self.R[:self.points, :self.points]
 
     '''
@@ -81,31 +83,28 @@ class Cholesky:
     '''
 
 
-def elasticNet(x = None, y = None, xtx = None, xty = None, n = None, overwriteMatrices = False, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
+def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = False, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
     '''
     Least angle implementation of the ElasticNet.
     Finding an optimal beta for a single or multiple values of l1 and a single value of l2.
-    One should specify either {x, y} or {xtx, xty, n}.
+    One should specify either {x, y} or {xtx, xty}.
     Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
-    :param xtx: x.T.x matrix product
-    :param xty: x.T.y matrix-vector product
-    :param n: number of data points
+    :param xtx: x.T.x matrix product divided by the number of observations
+    :param xty: x.T.y matrix-vector product divided by the number of observations
     :param overwriteMatrices: whether xtx and xty can be overwritten
     :param l1: L1 regularisation parameter or a list of parameters
     :param l2: L2 regularisation parameter
     :param itMax: maximum number of iterations, including when a variable is removed
     :param varMax: maximum number of dependent variables to be included
     :param cholesky: whether to use Cholesky decomposition for xtx
-    :return:
+    :return: vector of betas if l1 is a scalar, matrix of betas with columns corresponding to l1 in descending order otherwise
     '''
 
     '''
-    l1 -> l1 * n
-    l2 -> l2 * n
-    L = ||y - x * b||_2 ^ 2 + l1 * ||b||_1 + l2 * ||b||_2 ^ 2
-    X -> [X ; sqrt(l2) Id]
+    L = ||y - x * b||_2 ^ 2 / n + l1 * ||b||_1 + l2 * ||b||_2 ^ 2
+    X / sqrt(n) -> [X / sqrt(n) ; sqrt(l2) Id]
     L -> ||y - x * b||_2 ^ 2 + l1 * ||b||_1
     '''
 
@@ -114,15 +113,13 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, n = None, overwriteMa
             x = x[:, np.newaxis]
         if y.ndim == 2:
             y = y[:, 0]
-        xty = np.dot(x.T, y)
-        xtx = np.dot(x.T, x)
-        n = len(x)
+        xty = np.dot(x.T, y) / len(x)
+        xtx = np.dot(x.T, x) / len(x)
     elif not overwriteMatrices:
         xtx = xtx.copy()
         xty = xty.copy()
 
     p = len(xtx)
-    l2 *= n
     xtx.flat[::p + 1] += l2
     returnMatrix = True
     if type(l1) == np.ndarray:
@@ -138,7 +135,7 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, n = None, overwriteMa
             return beta[:, np.newaxis] if returnMatrix else beta
         except:
             return np.full([p, 1] if returnMatrix else p, 0.0, dtype = xtx.dtype)
-    l1List *= n / 2
+    l1List /= 2
     l1List = np.sort(l1List, kind = 'mergesort')[::-1]
     l1 = l1List[0]
     l1Ind = 0
@@ -161,8 +158,6 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, n = None, overwriteMa
 
     if p < varMax:
         varMax = p
-    if not l2 and n < varMax:
-        varMax = n
     while var < varMax and it != itMax:
         j = np.where(I)[0][np.argmax(np.fabs(xty[I]))]
         # print('+', j)
@@ -246,28 +241,26 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, n = None, overwriteMa
     return betaList if returnMatrix else betaList[:, 0]
 
 
-def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, n = None, overwriteMatrices = False, l1 = None, l2 = None, tol = 1e-4, itMax = 1000):
+def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, overwriteMatrices = False, l1 = None, l2 = None, tol = 1e-4, itMax = 1000):
     '''
     Coordinate descent implementation of the ElasticNet.
-    One should specify either {x, y} or {xtx, xty, n}.
+    One should specify either {x, y} or {xtx, xty}.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
-    :param xtx: x.T.x matrix product
-    :param xty: x.T.y matrix-vector product
-    :param n: number of data points
+    :param xtx: x.T.x matrix product divided by the number of observations
+    :param xty: x.T.y matrix-vector product divided by the number of observations
     :param overwriteMatrices: whether xtx and xty can be overwritten
     :param l1: L1 regularisation parameter
     :param l2: L2 regularisation parameter
     :param tol: tolerance of beta components relative to the largest one, used as a stopping parameter
     :param itMax: maximum number of iterations of running through all beta components
+    :return: vector of betas
     '''
 
     '''
-    l1 -> l1 * n
-    l2 -> l2 * n
-    L = ||y - x * b||_2 ^ 2 + l1 * ||b||_1 + l2 * ||b||_2 ^ 2
-    L1 = ||r - x * b1||_2 ^ 2 + l1 * |b1| + l2 * b1 ^ 2
-    b1 = max(0, r * x - l1 / 2) * sign(r * x) / (x ^ 2 + l2)
+    L = ||y - x * b||_2 ^ 2 / n + l1 * ||b||_1 + l2 * ||b||_2 ^ 2
+    L1 = ||r - x * b1||_2 ^ 2 / n + l1 * |b1| + l2 * b1 ^ 2
+    b1 = max(0, r * x / n - l1 / 2) * sign(r * x) / (x ^ 2 / n + l2)
     '''
 
     if xtx is None:
@@ -275,47 +268,36 @@ def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, n = 
             x = x[:, np.newaxis]
         if y.ndim == 2:
             y = y[:, 0]
-        xty = np.dot(x.T, y)
-        xtx = np.dot(x.T, x)
-        n = len(x)
+        xty = np.dot(x.T, y) / len(x)
+        xtx = np.dot(x.T, x) / len(x)
     elif not overwriteMatrices:
         xtx = xtx.copy()
         xty = xty.copy()
 
     #@nb.njit(nogil = True, fastmath = True)
-    def elasticNetCoordinateDescent1(xtx, xty, n, l1, l2, tol, itMax):
+    def elasticNetCoordinateDescent1(xtx, xty, l1, l2, tol, itMax):
         p = len(xtx)
-
-        l1 *= n / 2
-        l2 *= n
-
-        normSquareInverse = (1.0 / (np.sum(x ** 2, axis = 0) + l2[0])).astype(x.dtype)
-
-        r = y.copy()
+        l1 /= 2
+        normSquareInverse = (1.0 / (xtx.flat[::p + 1] + l2[0])).astype(x.dtype) # (1.0 / (np.sum(x ** 2, axis = 0) / len(x) + l2[0]))
         beta = np.full(p, 0.0, dtype = y.dtype)
-
         for it in range(itMax):
             shiftMax = 0.0
             for i in range(p):
-                if beta[i]:
-                    r += x[:, i] * beta[i]
                 b1Old = beta[i]
                 beta[i] = 0.0
-                prod = xty[i] - np.dot(xtx[i], beta) #np.dot(r, x1) #tf.tensordot(r, x1, [0, 0]).numpy()
+                prod = xty[i] - np.dot(xtx[i], beta)
                 b1 = np.fabs(prod) - l1[0]
                 if b1 <= 0.0:
                     continue
                 b1 *= np.sign(prod) * normSquareInverse[i]
                 shiftMax = max(shiftMax, np.fabs(b1 - b1Old))
                 beta[i] = b1
-                r -= x[:, i] * b1
             betaAbsMax = np.max(np.fabs(beta))
             if not betaAbsMax or shiftMax / betaAbsMax < tol[0]:
                 break
-
         return beta
 
-    return elasticNetCoordinateDescent1(xtx = xtx, xty = xty, n = n, l1 = np.array([l1]).astype(x.dtype), l2 = np.array([l2]).astype(x.dtype), tol = np.array([tol]).astype(x.dtype), itMax = itMax)
+    return elasticNetCoordinateDescent1(xtx = xtx, xty = xty, l1 = np.array([l1]).astype(x.dtype), l2 = np.array([l2]).astype(x.dtype), tol = np.array([tol]).astype(x.dtype), itMax = itMax)
 
 
 def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
@@ -375,10 +357,26 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
 
     for b in range(len(n)):
         for l2Ind in range(l2Len):
-            beta = elasticNet(x = None, y = None, xtx = xtxTotal - xtx[:, :, b], xty = xtyTotal - xty[:, b], n = nTotal - n[b], l1 = l1List, l2 = l2List[l2Ind], cholesky = cholesky)
+            beta = elasticNet(x = None, y = None, xtx = (xtxTotal - xtx[:, :, b]) / (nTotal - n[b]), xty = (xtyTotal - xty[:, b]) / (nTotal - n[b]), overwriteMatrices = True, l1 = l1List, l2 = l2List[l2Ind], cholesky = cholesky)
             cost[:, l2Ind] += np.sum(np.tensordot(xtx[:, :, b], beta, axes = [1, 0]) * beta, axis = 0) - 2 * np.tensordot(xty[:, b], beta, axes = [0, 0])
 
     l1Ind, l2Ind = np.unravel_index(np.argmin(cost), cost.shape)
     l1 = l1List[l1Ind]
     l2 = l2List[l2Ind]
-    return elasticNet(x = None, y = None, xtx = xtxTotal, xty = xtyTotal, n = nTotal, overwriteMatrices = True, l1 = l1, l2 = l2) if returnBeta else None, l1, l2
+    return elasticNet(x = None, y = None, xtx = xtxTotal / nTotal, xty = xtyTotal / nTotal, overwriteMatrices = True, l1 = l1, l2 = l2) if returnBeta else None, l1, l2
+
+
+def getRandom(n, p):
+    '''
+    Generation of random variables for a regression.
+    :param n: number of data points
+    :param p: number of dependent variables
+    :return: matrix of independent variables, vector of depenndent variables
+    '''
+    n = int(n)
+    p = int(p)
+    x = 3.0 * (np.random.rand(n, p) - 0.5)
+    y = x.dot(np.random.rand(p) - 0.5) + np.random.rand(n)
+    x = x.astype(np.float32)
+    y = y.astype(np.float32)
+    return x, y
