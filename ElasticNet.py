@@ -1,3 +1,5 @@
+# https://github.com/petunin1/ElasticNet
+
 import numpy as np
 import scipy
 
@@ -278,8 +280,8 @@ def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, over
     def elasticNetCoordinateDescent1(xtx, xty, l1, l2, tol, itMax):
         p = len(xtx)
         l1 /= 2
-        normSquareInverse = (1.0 / (xtx.flat[::p + 1] + l2[0])).astype(x.dtype) # (1.0 / (np.sum(x ** 2, axis = 0) / len(x) + l2[0]))
-        beta = np.full(p, 0.0, dtype = y.dtype)
+        normSquareInverse = (1.0 / (xtx.flat[::p + 1] + l2[0])).astype(xtx.dtype)
+        beta = np.full(p, 0.0, dtype = xtx.dtype)
         for it in range(itMax):
             shiftMax = 0.0
             for i in range(p):
@@ -297,7 +299,7 @@ def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, over
                 break
         return beta
 
-    return elasticNetCoordinateDescent1(xtx = xtx, xty = xty, l1 = np.array([l1]).astype(x.dtype), l2 = np.array([l2]).astype(x.dtype), tol = np.array([tol]).astype(x.dtype), itMax = itMax)
+    return elasticNetCoordinateDescent1(xtx = xtx, xty = xty, l1 = np.array([l1]).astype(xtx.dtype), l2 = np.array([l2]).astype(xtx.dtype), tol = np.array([tol]).astype(xtx.dtype), itMax = itMax)
 
 
 def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
@@ -366,12 +368,12 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
     return elasticNet(x = None, y = None, xtx = xtxTotal / nTotal, xty = xtyTotal / nTotal, overwriteMatrices = True, l1 = l1, l2 = l2) if returnBeta else None, l1, l2
 
 
-def getRandom(n, p):
+def generateRandomRegression(n, p):
     '''
     Generation of random variables for a regression.
     :param n: number of data points
     :param p: number of dependent variables
-    :return: matrix of independent variables, vector of depenndent variables
+    :return: matrix of independent variables, vector of dependent variables
     '''
     n = int(n)
     p = int(p)
