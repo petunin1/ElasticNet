@@ -39,7 +39,7 @@ class Cholesky:
         '''
         if not self.points:
             if not self.R.shape[0]:
-                self.R = np.array([[np.sqrt(xTx)]], dtype = x.dtype)
+                self.R = np.array([[np.sqrt(xTx)]], dtype = xTx.dtype)
             else:
                 self.R[0, 0] = np.sqrt(xTx)
             self.points = 1
@@ -64,7 +64,7 @@ class Cholesky:
             G, y = planeRot(self.R[k:k + 2, k])
             self.R[k:k + 2, k] = y
             if k < self.points - 1:
-                self.R[k:k + 2, k + 1:self.points] = np.dot(G, self.R[k:k + 2, k + 1:self.points])
+                self.R[k:k + 2, k + 1:self.points] = G @ self.R[k:k + 2, k + 1:self.points]
 
     def get(self):
         '''
@@ -73,15 +73,15 @@ class Cholesky:
         return self.R[:self.points, :self.points]
 
     '''
-    x = np.random.rand(10e4, 3)
+    x = np.random.rand(int(10e4), 3)
     ch = Cholesky(np.float32)
     ch.insertProducts(None, np.sum(x[:, 0] ** 2))
-    ch.insertProducts(np.dot(x[:, [0]].T, x[:, 2]), np.sum(x[:, 1] ** 2))
-    ch.insertProducts(np.dot(x[:, [0, 1]].T, x[:, 2]), np.sum(x[:, 2] ** 2))
+    ch.insertProducts(x[:, [0]].T @ x[:, 2], np.sum(x[:, 1] ** 2))
+    ch.insertProducts(x[:, [0, 1]].T @ x[:, 2], np.sum(x[:, 2] ** 2))
     ch.remove(1)
-    ch.insert(x[:, [0, 2]], x[:, 1])
-    print(np.dot(x.T, x)) # original x.T x matrix 
-    print(np.dot(ch.get().T, ch.get())) # the same for Cholesky decomposition instead of x
+    ch.insertProducts(x[:, [0, 2]].T @ x[:, 1], np.sum(x[:, 1] ** 2))
+    print(x.T @ x) # original x.T x matrix
+    print(ch.get().T @ ch.get()) # the same for Cholesky decomposition instead of x, rearranged by order of inserting the variables
     '''
 
 
@@ -115,8 +115,8 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = F
             x = x[:, np.newaxis]
         if y.ndim == 2:
             y = y[:, 0]
-        xty = np.dot(x.T, y) / len(x)
-        xtx = np.dot(x.T, x) / len(x)
+        xty = x.T @ y / len(x)
+        xtx = x.T @ x / len(x)
     elif not overwriteMatrices:
         xtx = xtx.copy()
         xty = xty.copy()
@@ -180,7 +180,7 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = F
         '''
         g = scipy.linalg.solve_triangular(ch.get(), scipy.linalg.solve_triangular(ch.get().T, s, lower = True), lower = False, overwrite_b = True) if cholesky else \
             scipy.linalg.solve(xtx[A, :][:, A], s)
-        a = np.dot(xtx[I, :][:, A], g) # X(inactive) & d vector product with=without regularisation (the same as "np.dot(x[:, I].T, d)")
+        a = xtx[I, :][:, A] @ g # X(inactive) & d vector product with=without regularisation (the same as "x[:, I].T @ d")
 
         '''
         (\pm \vec X_{A} \pm_{2} \vec X_{I}) (\vec y - \gamma \vec d) = 0    [ignore inactive inputs to get the gamma unconstrained by inactive inputs]
@@ -210,9 +210,9 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = F
         betaActiveNew = beta[A] + g
 
         while True:
-            # "np.sum((y - np.dot(x, beta)) * d)" = "np.dot(xty, beta)"
-            # "np.sum(d ** 2)" = "np.dot(g, np.dot(xtx[A, :][:, A], g))"
-            fraction = (np.dot(xty[A], g) - l1 * np.sum(np.fabs(betaActiveNew - beta[A]))) / np.dot(g, np.dot(xtx[A, :][:, A], g))
+            # "np.sum((y - x @ beta)) * d)" = "xty @ beta)"
+            # "np.sum(d ** 2)" = "g @ xtx[A, :][:, A] @ g"
+            fraction = (xty[A] @ g - l1 * np.sum(np.fabs(betaActiveNew - beta[A]))) / (g @ xtx[A, :][:, A] @ g)
             if fraction > 1:
                 break
             betaList[:, l1Ind] = beta
@@ -224,7 +224,7 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = F
             l1 = l1List[l1Ind]
 
         beta[A] = betaActiveNew
-        xty -= np.dot(xtx[:, A], g)
+        xty -= xtx[:, A] @ g
         it += 1
 
         if dropVariable:
@@ -270,8 +270,8 @@ def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, over
             x = x[:, np.newaxis]
         if y.ndim == 2:
             y = y[:, 0]
-        xty = np.dot(x.T, y) / len(x)
-        xtx = np.dot(x.T, x) / len(x)
+        xty = x.T @ y / len(x)
+        xtx = x.T @ x / len(x)
     elif not overwriteMatrices:
         xtx = xtx.copy()
         xty = xty.copy()
@@ -287,7 +287,7 @@ def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, over
             for i in range(p):
                 b1Old = beta[i]
                 beta[i] = 0.0
-                prod = xty[i] - np.dot(xtx[i], beta)
+                prod = xty[i] - xtx[i] @ beta
                 b1 = np.fabs(prod) - l1[0]
                 if b1 <= 0.0:
                     continue
@@ -307,7 +307,6 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
     Cross-validated version of the elasticNet function.
     Finding an optimal beta, l1, l2, using the elasticNet function.
     One should either specify {x, y, batches} or {xtx, xty, n}.
-    Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed; the matrices will be overwritten.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
     :param batches: number of batches for cross-validation (should be >=2)
@@ -341,9 +340,9 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
                 end = nTotal
                 n[b] = end - begin
             xb = x[begin:end]
-            xtx[:, :, b] = np.dot(xb.T, xb)
+            xtx[:, :, b] = xb.T @ xb
             yb = y[begin:end]
-            xty[:, b] = np.dot(xb.T, yb)
+            xty[:, b] = xb.T @ yb
             begin += batchLen
             end += batchLen
     else:
