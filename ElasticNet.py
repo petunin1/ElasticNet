@@ -150,7 +150,7 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = F
         ch = Cholesky(xtx.dtype, p)
     betaList = np.full((p, len(l1List)), 0.0, dtype = xtx.dtype)
     beta = np.full(p, 0.0, dtype = xtx.dtype)
-    I = np.full(p, True, dtype = np.bool)
+    I = np.full(p, True, dtype = bool)
     A = np.empty(0, dtype = np.int64)
     indDrop = 0
 
@@ -302,7 +302,42 @@ def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, over
     return elasticNetCoordinateDescent1(xtx = xtx, xty = xty, l1 = np.array([l1]).astype(xtx.dtype), l2 = np.array([l2]).astype(xtx.dtype), tol = np.array([tol]).astype(xtx.dtype), itMax = itMax)
 
 
-def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
+def getBatchCov(x = None, y = None, batches = None, xtx = None, xtxTotal = None, xty = None, xtyTotal = None, n = None, nTotal = None):
+    calcXtx = xtx is None
+    if xty is None:
+        if x.ndim == 1:
+            x = x[:, np.newaxis]
+        if y.ndim == 2:
+            y = y[:, 0]
+        nTotal, p = x.shape
+        batchLen = np.int64(np.floor(nTotal / batches))
+        if calcXtx:
+            xtx = np.empty([p, p, batches], dtype = x.dtype)
+        xty = np.empty([p, batches], dtype = xtx.dtype)
+        n = np.full(batches, batchLen, dtype = np.int64)
+        begin = 0
+        end = batchLen
+        for b in range(batches):
+            if b == batches - 1:
+                end = nTotal
+                n[b] = end - begin
+            xb = x[begin:end]
+            if calcXtx:
+                xtx[:, :, b] = xb.T @ xb
+            yb = y[begin:end]
+            xty[:, b] = xb.T @ yb
+            begin += batchLen
+            end += batchLen
+    if xtxTotal is None:
+        xtxTotal = np.sum(xtx, axis = 2)
+    if xtyTotal is None:
+        xtyTotal = np.sum(xty, axis = 1)
+    if nTotal is None:
+        nTotal = np.sum(n)
+    return xtx, xtxTotal, xty, xtyTotal, n, nTotal
+
+
+def elasticNetCV(x = None, y = None, batches = None, xtx = None, xtxTotal = None, xty = None, xtyTotal = None, n = None, nTotal = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
     '''
     Cross-validated version of the elasticNet function.
     Finding an optimal beta, l1, l2, using the elasticNet function.
@@ -323,32 +358,7 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xty = None, n =
     :return: optimal beta for the combined set of data; optimal L1; optimal L2
     '''
 
-    if xtx is None:
-        if x.ndim == 1:
-            x = x[:, np.newaxis]
-        if y.ndim == 2:
-            y = y[:, 0]
-        nTotal, p = x.shape
-        batchLen = np.int64(np.floor(nTotal / batches))
-        xtx = np.empty([p, p, batches], dtype = x.dtype)
-        xty = np.empty([p, batches], dtype = xtx.dtype)
-        n = np.full(batches, batchLen, dtype = np.int64)
-        begin = 0
-        end = batchLen
-        for b in range(batches):
-            if b == batches - 1:
-                end = nTotal
-                n[b] = end - begin
-            xb = x[begin:end]
-            xtx[:, :, b] = xb.T @ xb
-            yb = y[begin:end]
-            xty[:, b] = xb.T @ yb
-            begin += batchLen
-            end += batchLen
-    else:
-        nTotal = np.sum(n)
-    xtxTotal = np.sum(xtx, axis = 2)
-    xtyTotal = np.sum(xty, axis = 1)
+    xtx, xtxTotal, xty, xtyTotal, n, nTotal = getBatchCov(x, y, batches, xtx, xtxTotal, xty, xtyTotal, n, nTotal)
 
     l1List = np.sort(np.array(l1, dtype = xtx.dtype) if type(l1) == list else l1 if type(l1) == np.ndarray else np.array([l1], dtype = xtx.dtype), kind = 'mergesort')[::-1]
     l2List = np.array(l2, dtype = xtx.dtype) if type(l2) == list else l2 if type(l2) == np.ndarray else np.array([l2], dtype = xtx.dtype)
