@@ -85,7 +85,7 @@ class Cholesky:
     '''
 
 
-def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = False, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
+def elasticNet(x = None, y = None, keep = None, xtx = None, xty = None, overwriteMatrices = False, l1 = 0.0, l2 = 0.0, itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False):
     '''
     Least angle implementation of the ElasticNet.
     Finding an optimal beta for a single or multiple values of l1 and a single value of l2.
@@ -93,6 +93,7 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = F
     Pre-calculated xtxTotal, xtyTotal, nTotal can be specified for speed.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
+    :param keep: boolean mask of columns of matrix x to keep (used to avoid memory allocation for the submatrix), None means keep all columns
     :param xtx: x.T.x matrix product divided by the number of observations
     :param xty: x.T.y matrix-vector product divided by the number of observations
     :param overwriteMatrices: whether xtx and xty can be overwritten
@@ -116,7 +117,7 @@ def elasticNet(x = None, y = None, xtx = None, xty = None, overwriteMatrices = F
         if y.ndim == 2:
             y = y[:, 0]
         xty = x.T @ y / len(x)
-        xtx = x.T @ x / len(x)
+        xtx = (x.T @ x if keep is None else (x.T @ x)[keep][:, keep]) / len(x)
     elif not overwriteMatrices:
         xtx = xtx.copy()
         xty = xty.copy()
@@ -302,7 +303,7 @@ def elasticNetCoordinateDescent(x = None, y = None, xtx = None, xty = None, over
     return elasticNetCoordinateDescent1(xtx = xtx, xty = xty, l1 = np.array([l1]).astype(xtx.dtype), l2 = np.array([l2]).astype(xtx.dtype), tol = np.array([tol]).astype(xtx.dtype), itMax = itMax)
 
 
-def getBatchCov(x = None, y = None, batches = None, xtx = None, xtxTotal = None, xty = None, xtyTotal = None, n = None, nTotal = None):
+def getBatchCov(x = None, y = None, keep = None, batches = None, xtx = None, xtxTotal = None, xty = None, xtyTotal = None, n = None, nTotal = None):
     calcXtx = xtx is None
     if xty is None:
         if x.ndim == 1:
@@ -310,6 +311,8 @@ def getBatchCov(x = None, y = None, batches = None, xtx = None, xtxTotal = None,
         if y.ndim == 2:
             y = y[:, 0]
         nTotal, p = x.shape
+        if keep is not None:
+            p = keep.sum()
         batchLen = np.int64(np.floor(nTotal / batches))
         if calcXtx:
             xtx = np.empty([p, p, batches], dtype = x.dtype)
@@ -323,9 +326,9 @@ def getBatchCov(x = None, y = None, batches = None, xtx = None, xtxTotal = None,
                 n[b] = end - begin
             xb = x[begin:end]
             if calcXtx:
-                xtx[:, :, b] = xb.T @ xb
+                xtx[:, :, b] = xb.T @ xb if keep is None else (xb.T @ xb)[keep][:, keep]
             yb = y[begin:end]
-            xty[:, b] = xb.T @ yb
+            xty[:, b] = xb.T @ yb if keep is None else (xb.T @ yb)[keep]
             begin += batchLen
             end += batchLen
     if xtxTotal is None:
@@ -337,13 +340,14 @@ def getBatchCov(x = None, y = None, batches = None, xtx = None, xtxTotal = None,
     return xtx, xtxTotal, xty, xtyTotal, n, nTotal
 
 
-def elasticNetCV(x = None, y = None, batches = None, xtx = None, xtxTotal = None, xty = None, xtyTotal = None, n = None, nTotal = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
+def elasticNetCV(x = None, y = None, keep = None, batches = None, xtx = None, xtxTotal = None, xty = None, xtyTotal = None, n = None, nTotal = None, l1 = np.logspace(-15.0, 5.0, num = 100, base = 2.0), l2 = np.logspace(-15.0, 5.0, num = 30, base = 2.0), itMax = np.iinfo(np.int64).max, varMax = np.iinfo(np.int64).max, cholesky = False, returnBeta = True):
     '''
     Cross-validated version of the elasticNet function.
     Finding an optimal beta, l1, l2, using the elasticNet function.
     One should either specify {x, y, batches} or {xtx, xty, n}.
     :param x: matrix of independent vectors
     :param y: dependent vector or matrix with last dimension of size 1
+    :param keep: boolean mask of columns of matrix x to keep (used to avoid memory allocation for the submatrix), None means keep all columns
     :param batches: number of batches for cross-validation (should be >=2)
     :param xtx: 3-dimensional tensor of x.T.x matrix products where the last dimension corresponds to batches
     :param xty: 2-dimensional tensor of x.T.y matrix-vector products where the last dimension corresponds to batches
@@ -358,7 +362,7 @@ def elasticNetCV(x = None, y = None, batches = None, xtx = None, xtxTotal = None
     :return: optimal beta for the combined set of data; optimal L1; optimal L2
     '''
 
-    xtx, xtxTotal, xty, xtyTotal, n, nTotal = getBatchCov(x, y, batches, xtx, xtxTotal, xty, xtyTotal, n, nTotal)
+    xtx, xtxTotal, xty, xtyTotal, n, nTotal = getBatchCov(x, y, keep, batches, xtx, xtxTotal, xty, xtyTotal, n, nTotal)
 
     l1List = np.sort(np.array(l1, dtype = xtx.dtype) if type(l1) == list else l1 if type(l1) == np.ndarray else np.array([l1], dtype = xtx.dtype), kind = 'mergesort')[::-1]
     l2List = np.array(l2, dtype = xtx.dtype) if type(l2) == list else l2 if type(l2) == np.ndarray else np.array([l2], dtype = xtx.dtype)
